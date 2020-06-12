@@ -223,3 +223,15 @@ Deriv(A, "b.s1k1")
 B <- expression(wh / (exp(b.s1k1*xk1 + b.s1k2*xk2) + exp(b.s2k1*xk1 + b.s2k2*xk2)))
 Deriv(B, "b.s1k1")
 
+
+
+a <- expression(exp(b1*x1 + b2*x2))
+Deriv(a, "b1")
+
+
+
+# B = wh / log(sum[s] exp(betas*X))
+B <- expression(wh / (exp(b.si_1k1 * x.k1 + b.si_1k2 * x.k2) +
+                         exp(b.si_2k1 * x.k1 + b.si_2k2 * x.k2)))
+Deriv(B, "b.si_1k1")
+Deriv(B, "b.si_2k2")
