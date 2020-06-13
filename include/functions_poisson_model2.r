@@ -1298,14 +1298,33 @@ pd3 <- function(idiff, jbeta, ijsk, wh, xmat, beta){
            betax_sum=mBsx_sum[h.df],
            Bprime= -wh * xh_kj * state_betax / betax_sum^2)
   
+  # gprimeh <- Adf %>% 
+  #   left_join(Bdf, by = "h.df") %>%
+  #   mutate(gprimeh=- xh_ki * (A * Bprime + B * Aprime))
+  
   gprimeh <- Adf %>% 
     left_join(Bdf, by = "h.df") %>%
-    mutate(gprimeh=- xh_ki * (A * Bprime + B * Aprime))
+    # djb fudge ----
+    mutate(ABprime = A * Bprime,
+           BAprime = B * Aprime,
+           xABprime=xh_ki * ABprime) %>%
+    # end fudge ----
+    mutate(gprimeh=- xh_ki * (ABprime + BAprime))
+  
+  # gprimeh <- Adf %>% 
+  #   left_join(Bdf, by = "h.df") %>%
+  #   # djb fudge ----
+  #   mutate(ABprime = A * Bprime,
+  #          BAprime = B * Aprime,
+  #          BAprime=ifelse(idiff != jbeta, 0, BAprime)) %>% # djb ????? ----
+  #   mutate(gprimeh=- xh_ki * (ABprime + BAprime))
     # - xmat[, i.k] * (A * Bprime + B * Aprime)
   # gprimeh
   element <- sum(gprimeh$gprimeh)
+  element2 <- -sum(gprimeh$xABprime)
   print(gprimeh)
-  element
+  pdval <- ifelse(idiff==jbeta, element, element2)
+  pdval
 
   # calulate A and Aprime
   # A <- exp(b.s1k1*xhk1 + b.s1k2*xhk2)
@@ -1401,6 +1420,8 @@ pd3(1, 4, ijsk, p$wh, p$xmat, beta=beta)
 
 pd3(2, 1, ijsk, p$wh, p$xmat, beta=beta)
 pd3(3, 1, ijsk, p$wh, p$xmat, beta=beta)
+pd3(2, 3, ijsk, p$wh, p$xmat, beta=beta)
+pd3(3, 2, ijsk, p$wh, p$xmat, beta=beta)
 pd3(4, 1, ijsk, p$wh, p$xmat, beta=beta)
 
 pd3(2, 2, ijsk, p$wh, p$xmat, beta=beta)

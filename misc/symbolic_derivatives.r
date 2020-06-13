@@ -235,3 +235,9 @@ B <- expression(wh / (exp(b.si_1k1 * x.k1 + b.si_1k2 * x.k2) +
                          exp(b.si_2k1 * x.k1 + b.si_2k2 * x.k2)))
 Deriv(B, "b.si_1k1")
 Deriv(B, "b.si_2k2")
+
+B <- expression(wh / (exp(b.sj1_k1 * x.k1) +
+                        exp(b.sj2_k1 * x.k1) +
+                        exp(b.sj3_k1 * x.k1)))
+Deriv(B, "b.sj1_k1")
+Deriv(B, "b.sj2_k1")
