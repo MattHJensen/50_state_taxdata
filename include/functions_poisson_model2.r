@@ -1322,7 +1322,7 @@ pd3 <- function(idiff, jbeta, ijsk, wh, xmat, beta){
   # gprimeh
   element <- sum(gprimeh$gprimeh)
   element2 <- -sum(gprimeh$xABprime)
-  print(gprimeh)
+  # print(gprimeh)
   pdval <- ifelse(idiff==jbeta, element, element2)
   pdval
 
@@ -1363,14 +1363,21 @@ p <- make_problem(h=2, k=2, s=3) # not good djb ----
 p <- make_problem(h=3, k=1, s=2)
 p <- make_problem(h=3, k=2, s=2) # good
 p <- make_problem(h=3, k=2, s=3) # not good djb ----
+p <- make_problem(h=6, k=5, s=4) # not good djb ----
 
 p <- make_problem(h=5, k=2, s=2) # good through here djb ----
 p <- make_problem(h=5, k=2, s=3) # bad results maybe bad data in the function??
 
-p <- make_problem(h=20, k=4, s=8)
+p <- make_problem(h=10, k=4, s=8)
+p <- make_problem(h=100, k=6, s=20)
 
 p <- make_problem(h=50, k=2, s=2)
 p <- make_problem(h=10, k=5, s=2)
+
+p <- make_problem(h=10, k=3, s=4)
+
+p <- make_problem(h=1000, k=3, s=4)
+p <- make_problem(h=1000, k=30, s=50)
 
 #.. define indexes ----
 ijsk <- expand_grid(s=1:p$s, k=1:p$k) %>% 
@@ -1411,6 +1418,10 @@ diff_vec(betavec, wh, xmat, targets)
 
 #.. jacobian finite differences ----
 jacobian(diff_vec, x=betavec, wh=p$wh, xmat=p$xmat, targets=targets)
+pd3(1, 1, ijsk, p$wh, p$xmat, beta=beta)
+pd3(14, 28, ijsk, p$wh, p$xmat, beta=beta)
+pd3(30, 31, ijsk, p$wh, p$xmat, beta=beta)
+
 
 #.. run pd ----
 pd3(1, 1, ijsk, p$wh, p$xmat, beta=beta)
@@ -1426,5 +1437,232 @@ pd3(4, 1, ijsk, p$wh, p$xmat, beta=beta)
 
 pd3(2, 2, ijsk, p$wh, p$xmat, beta=beta)
 pd3(3, 3, ijsk, p$wh, p$xmat, beta=beta)
+
+
+
+pd <- function(idiff, jbeta, ijsk, wh, xmat, beta){
+  # determine one element of the Jacobian matrix -- the partial derivative of:
+  #   difference in row i of Jacobian (difference between target and calculated target)
+  #     with respect to
+  #   beta in column j of Jacobian
+  
+  # ijsk is a 4-column matrix that maps the row number of the difference (idiff) or
+  #   column number of the beta (jbeta), which corresponds to the first column of ijsk, named "ij",
+  #   to the state for the idiff or jbeta, in column 3 of the matrix, named "s" and to the
+  #   characteristic for the idiff or jbeta, in column 4, named "k"
+  
+  # get the s and k values for the idiff passed to this function
+  i.s <- ijsk[idiff, "s"]
+  i.k <- ijsk[idiff, "k"]
+  
+  # get the s and k values for the jbeta passed to this function
+  j.s <- ijsk[jbeta, "s"]
+  j.k <- ijsk[jbeta, "k"]
+  
+  # i.s; j.s; i.k; j.k
+  
+  
+  #  Let each difference between a target and its calculated value be:
+  #    (target[s, k] - g(beta[s, k]))
+  #  
+  # For a single target difference, dropping the subscripts for now, but still looking at just one difference
+  
+  #   g(beta)= weighted sum of X over hh, or sum[h] of X * exp(beta %*% X + delta[h]) where delta[h] is a function of all beta[s,k]
+  
+  #     Re-express g(beta):
+  #          = sum[h] of X * exp(beta*X) * exp(delta[h]) # involving just the beta and x needed for this target
+  #      
+  #          = sum[h]  of X * A * B where
+  #              A=exp(beta * X) i.e., A=a household's weight for a given state before considering delta
+  #              B=exp(delta[h]) and delta is a household-specific value and is a function of beta
+  
+  # we need the NEGATIVE OF THE partial derivative, gprime, wrt a particular beta
+  # gprime(beta), still for a single target -- product rule gives:
+  #     gprime(beta)=sum[h] of X * (A * Bprime + B * Aprime)
+  
+  # make a dataframe of households, and calculate each household's A, Aprime, B, and Bprime
+  hstub <- tibble(h.df=1:h)
+  hsstub <- expand_grid(h.df=1:h, s.df=1:s)
+  
+  exponents_sum <- function(xrow, sidx){
+    # element by element multiplication of an x row by the corresponding beta values
+    # this is the sum of the exponents for a given state for a given household
+    as.numeric(xrow %*% beta[sidx, ])
+  }
+  
+  Adf <- hstub %>%
+    mutate(xh_ki=xmat[h.df, i.k]) %>% # get the x column involved in this target
+    rowwise() %>%
+    mutate(bx_sum= # sum of the x[, k] values for this person times the beta[i.s, k] coeffs for this target's state
+             exponents_sum(xmat[h.df,], i.s), # djb ---- i.s we need this for the state that's in the target
+           A=exp(bx_sum),
+           # Aprime is the derivative wrt beta-j, which is the x value for that beta
+           Aprime=A * xmat[h.df, j.k]) %>%
+    ungroup
+  
+  # for each state, for this person, we need: B_exponent <- beta %*% t(xmat)
+  # we also need the sums across states
+  # I think? this is the same for all i, j for a given beta so could move out of here and pass it in
+  Bsx <- hsstub %>%
+    rowwise() %>%
+    mutate(bsx=exponents_sum(xmat[h.df, ], s.df), # MAYBE HERE?? ---- s.df here we want beta exponent-sum for each given state
+           ebsx=exp(bsx)) %>%
+    ungroup()
+  
+  # make this a matrix -- h x s
+  mBsx <- Bsx %>%
+    select(h.df, s.df, ebsx) %>%
+    pivot_wider(names_from=s.df, values_from=ebsx) %>%
+    select(-h.df) %>%
+    as.matrix()
+  
+  mBsx_sum <- rowSums(mBsx)
+  
+  # now we are ready to get B and B prime  
+  # -(w[h] * x[h, j.k] * es[j.s]  / sum(es)^2)
+  
+  Bdf <- hstub %>%
+    mutate(wh=wh[h.df],
+           delta=delta[h.df],
+           B=exp(delta),
+           xh_kj=xmat[h.df, j.k],
+           state_betax =mBsx[h.df, j.s],
+           # state_betax =mBsx[h.df, i.s],
+           betax_sum=mBsx_sum[h.df],
+           Bprime= -wh * xh_kj * state_betax / betax_sum^2)
+  
+  # gprimeh <- Adf %>% 
+  #   left_join(Bdf, by = "h.df") %>%
+  #   mutate(gprimeh=- xh_ki * (A * Bprime + B * Aprime))
+  
+  gprimeh <- Adf %>% 
+    left_join(Bdf, by = "h.df") %>%
+    # djb fudge ----
+  mutate(ABprime = A * Bprime,
+         BAprime = B * Aprime,
+         xABprime=xh_ki * ABprime,
+         xBAprime=xh_ki * BAprime) %>%
+    # end fudge ----
+  mutate(gprimeh=- xh_ki * (ABprime + BAprime))
+  
+  # gprimeh <- Adf %>% 
+  #   left_join(Bdf, by = "h.df") %>%
+  #   # djb fudge ----
+  #   mutate(ABprime = A * Bprime,
+  #          BAprime = B * Aprime,
+  #          BAprime=ifelse(idiff != jbeta, 0, BAprime)) %>% # djb ????? ----
+  #   mutate(gprimeh=- xh_ki * (ABprime + BAprime))
+  # - xmat[, i.k] * (A * Bprime + B * Aprime)
+  # gprimeh
+  element <- sum(gprimeh$gprimeh)
+  element2 <- -sum(gprimeh$xABprime)
+  # print(gprimeh)
+  pdval <- ifelse((idiff==jbeta) | (i.s==j.s), element, element2)
+  # pdval <- ifelse(i.s==j.s, element, element2)
+  pdval
+  
+  # calulate A and Aprime
+  # A <- exp(b.s1k1*xhk1 + b.s1k2*xhk2)
+  # first get the exponent and then compute the exponentiation
+  # we want it for the state of the target in question i.e., for which we have the difference -- i.s
+  
+  
+  # we get the x values that correspond to the characteristic for the beta, j.k, because
+  # we are differentiating wrt that beta
+  
+  # calculate B and Bprime
+  # B is exp(delta), where delta=ln(wh / sum[s]exp(beta[s]X))
+  # B has 1 element per household
+  #   this simplifies to:
+  #   B <- wh / sum[s]exp(beta[s]x)
+  # we need each exp(beta[s]X) -- h households, s states
+  
+  # create B_exponent: a matrix with 1 row per state and 1 column per household
+  # for each column it has the exponent for a given state in the expression above
+  # that is, it has beta for that state times the k characteristics for the household
+  # now gprime
+}
+
+jac <- function(beta, wh, xmat){
+  h_n <- nrow(xmat)
+  s_n <- nrow(beta)
+  k_n <- ncol(beta)
+  ij_n <- s_n * k_n
+  
+  ijsk <- expand_grid(s=1:s_n, k=1:k_n) %>% 
+    arrange(k, s) %>%
+    mutate(ij=row_number()) %>%
+    select(ij, s, k) %>%
+    as.matrix
+  
+  # f <- function(id, jb, ijsk, xmat){
+  #   fk <- ijsk[id, "k"]
+  #   print(fk)
+  #   ijsk[id, "s"] + xmat[id, fk]
+  # }
+  # 
+  # 
+  # 
+  # jdf <- expand_grid(idiff=1:ij_n, jbeta=1:ij_n) %>%
+  #   rowwise() %>%
+  #   mutate(jvalue=pd(idiff, jbeta, ijsk, wh, xmat, beta))
+  # 
+  # jd2 <-jdf %>% 
+  #   pivot_wider(names_from = jbeta, values_from=jvalue) %>%
+  #   select(-idiff) %>%
+  #   as.matrix()
+  
+  
+  jmat <- matrix(0, nrow=ij_n, ncol=ij_n)
+  for(idiff in 1:ij_n){
+    print(idiff)
+     for(jbeta in 1:idiff){
+       jmat[idiff, jbeta] <- pd(idiff, jbeta, ijsk, wh, xmat, beta)
+     }
+  }
+  jmat[upper.tri(jmat)] <- t(jmat)[upper.tri(jmat)]
+  jmat
+}
+
+t1 <- proc.time()
+j1 <- jacobian(diff_vec, x=betavec, wh=p$wh, xmat=p$xmat, targets=targets)
+t2 <- proc.time()
+t2 - t1
+
+t3 <- proc.time()
+j2 <- jac(beta, wh, xmat)
+t4 <- proc.time()
+t4 - t3
+
+j1; j2
+(j1 - j2) %>% round(2)
+d <- (j1 - j2)
+
+r <- 1:6
+c <- 1:6
+d <- (j1 - j2)
+j1[r, c]; j2[r, c]
+d[r, c] %>% round(2)
+
+j1[5, 1]
+j2[5, 1]
+d[5, 1]
+sum(d)
+sum(d^2)
+
+pd(5, 1, ijsk, p$wh, p$xmat, beta=beta)
+
+dim(j1)
+d <- (j1 - j2)
+bad <- which(abs(d) > 0.1, arr.ind = TRUE) %>%
+  as_tibble() %>%
+  left_join(as_tibble(ijsk) %>% rename(row=ij, s.row=s, k.row=k)) %>%
+  left_join(as_tibble(ijsk) %>% rename(col=ij, s.col=s, k.col=k)) %>% 
+  arrange(row, col)
+bad
+
+guessbad <- expand_grid(sr=ijsk[, "s"], sc=ijsk[, "s"])
+
+ijsk
 
 
