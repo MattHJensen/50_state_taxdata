@@ -692,7 +692,7 @@ pd3 <- function(idiff, jbeta, ijsk, wh, xmat, beta){
   # gprimeh
   element <- sum(gprimeh$gprimeh)
   element2 <- -sum(gprimeh$xABprime)
-  # print(gprimeh)
+  print(gprimeh)
   pdval <- ifelse(idiff==jbeta, element, element2)
   pdval
 
@@ -1043,6 +1043,10 @@ pdfast <- function(idiff, jbeta){
 }
 
 
+xmat <- p$xmat
+wh <- p$wh
+beta <- rbeta
+
 
 jacfast <- function(wh, xmat, beta, parallel=TRUE){
   h_n <- nrow(xmat)
@@ -1110,6 +1114,8 @@ jacfast <- function(wh, xmat, beta, parallel=TRUE){
   # Amat has a row for each household and a column for each state, with exp(Bx) in each column
   # lAprime is a list of Aprime matrices, one per unique k, each matrix has 1 row per hh, 1 col per state
   Amat <- f_Amat(xmat, beta)
+  
+  print("getting lAprime...")
   lAprime <- f_Aprime(Amat, xmat, 1:k_n, parallel=parallel) # this can be done in parallel
   
   # now prepare B and lBprime
@@ -1118,6 +1124,7 @@ jacfast <- function(wh, xmat, beta, parallel=TRUE){
   Bvec <- exp(delta)
   
   # we need the sum, for each household, of the state exponents, which are in A
+  print("getting Bprime_mat...")
   A_hh_sums <- rowSums(Amat) # vector with 1 element per household
   A_hh_sums_squared <- A_hh_sums^2
   # Bprime: # -(w[h] * x[h, j.k] * es[j.s]  / sum(es)^2)
@@ -1145,6 +1152,7 @@ jacfast <- function(wh, xmat, beta, parallel=TRUE){
   Bprime_mat <- f_Bprime(wh, xmat, Bxs_div_BXsum2, 1:ij_n, parallel=parallel) # h x ij this can be done in parallel
   
   
+  print("getting lABprime ...")
   # ABprime: Amat * Bprime_mat -- we need a list of matrices, 1 per column of Amat
   # Amat is fixed, h x s
   # Bprime is an h x ij matrix
@@ -1154,26 +1162,132 @@ jacfast <- function(wh, xmat, beta, parallel=TRUE){
       Amat[, s] * Bprime_mat
     }
     lABprime <- llply(j_s, f, .parallel=parallel)
+    lABprime
   }
   lABprime <- f_ABprime(Amat, Bprime_mat, 1:s_n, parallel=parallel)
   
   
-  # lAprime is a list of k_n Aprime matrices, one per k, each matrix has 1 row per hh, 1 col per state
+  print("getting lBAprime ...")
+  # lBAprime is a list of k_n Aprime matrices, one per k, each matrix has 1 row per hh, 1 col per state
   lBAprime <- llply(lAprime, "*" , Bvec, .parallel=parallel) # multiply each matrix in Aprime by the vector Bvec
   
+  print("getting lxABprime ...") # djb RETURN this fails on memory write to tempfile?? ----
   # for the non-full elements we need xABprime =xh_ki * ABprime
-  # for the full pd elements we need gprimeh=- xh_ki * (ABprime + BAprime)
-  
-  f_xABprime <- function(idiff, jbeta, i_k, j_s){
-    # 
-    xmat[, i_k] * lABprime[[i_s]][, jbeta] # verify indexes!
+  # for the full pd elements we need gprimeh=- xh_ki * (ABprime + BAprime) or -xh_ki *ABprime -xh_ki * BAprime
+  f_xABprime <- function(k){
+    # we have s matrices in lABprime each of which has ij_n columns and h_n rows
+    # For each of these we want k_n matrices where each ABprime is multiplied
+    # by an xh_ki
+    llply(lABprime, "*", xmat[, k], .parallel=parallel)
+    
   }
+  # lxABprime has k_n elements, each of which has s matrices, with x[, k] multiplied by
+  # the ABprime matrix for a given state; it has h_n rows and ij_n columns
+  lxABprime <- llply(1:k_n, f_xABprime, .parallel=parallel)
+  # djb don't save this full matrix -- get hsums (colsums) ----
+  
+  print("getting lxBAprime ...")
+  f_xBAprime <- function(k){
+    # we have k matrices in lBAprime each of which has s_n columns and h_n rows
+    # For each of these we want k_n matrices where each BAprime is multiplied
+    # by an xh_ki
+    llply(lBAprime, "*", xmat[, k], .parallel=parallel)
+  }
+  # lxABprime has k_n elements, each of which has k_n matrices, with x[, k] multiplied by
+  # the BAprime matrix for a given k; it has h_n rows and k_n columns
+  lxBAprime <- llply(1:k_n, f_xBAprime, .parallel = parallel)
+
+  # for the non-full elements we need xABprime =xh_ki * ABprime
+  # for the full pd elements we need gprimeh=- xh_ki * (ABprime + BAprime) or -xh_ki *ABprime -xh_ki * BAprime
+  # collapse each matrix in each list by summing values across households
+  # lxBAprime <- llply()
+  
+  # ijstub %>% filter(idiff==2, jbeta==1)
+  
+  f <- function(lxABprime){
+    # k_n elements, each with s_n matrices, get colsums of each, which will be a vector
+    g <- function(matlist){
+      laply(matlist, colSums, .parallel=parallel)
+    }
+    llply(lxABprime, g, .parallel=parallel)
+  }
+  lxABprime_sums <- f(lxABprime)
+  
+  f <- function(lxBAprime){
+    # k_n elements, each with s_n matrices, get colsums of each, which will be a vector
+    g <- function(matlist){
+      laply(matlist, colSums, .parallel=parallel)
+    }
+    llply(lxBAprime, g, .parallel=parallel)
+  }
+  lxBAprime_sums <- f(lxBAprime)
+  
+  getpd2 <- function(idiff, jbeta){
+    df <- ijstub[(ijstub$idiff==idiff) & (ijstub$jbeta==jbeta), ]
+    pdfull <- df$pdfull[1]
+    i_k <- df$i_k[1]
+    j_k <- df$j_k[1]
+    i_s <- df$i_s[1]
+    j_s <- df$j_s[1]
+    idiff <- df$idiff[1]
+    
+    if(!pdfull) {
+      return(-lxABprime_sums[[j_k]][j_s, idiff])
+    } else {
+      return(-lxABprime_sums[[j_k]][j_s, idiff] - lxBAprime_sums[[i_k]][j_k, i_s])
+      # return(c(lxABprime_sums[[j_k]][j_s, idiff], lxBAprime_sums[[i_k]][j_k, i_s]))
+    } 
+  }
+  
+  getpd3 <- function(idiff, jbeta, i_s, i_k, j_s, j_k, pdfull){
+    # df <- ijstub[(ijstub$idiff==idiff) & (ijstub$jbeta==jbeta), ]
+    # pdfull <- df$pdfull[1]
+    # i_k <- df$i_k[1]
+    # j_k <- df$j_k[1]
+    # i_s <- df$i_s[1]
+    # j_s <- df$j_s[1]
+    # idiff <- df$idiff[1]
+    
+    if(!pdfull) {
+      return(-lxABprime_sums[[j_k]][j_s, idiff])
+    } else {
+      return(-lxABprime_sums[[j_k]][j_s, idiff] - lxBAprime_sums[[i_k]][j_k, i_s])
+      # return(c(lxABprime_sums[[j_k]][j_s, idiff], lxBAprime_sums[[i_k]][j_k, i_s]))
+    } 
+  }
+  
+  
+  getpd <- function(idiff, jbeta){
+    df <- ijstub[(ijstub$idiff==idiff) & (ijstub$jbeta==jbeta), ]
+    pdfull <- df$pdfull[1]
+    i_k <- df$i_k[1]
+    j_k <- df$j_k[1]
+    i_s <- df$i_s[1]
+    j_s <- df$j_s[1]
+    idiff <- df$idiff[1]
+    # print(df)
+    # print(j_k); print(j_s); print(idiff)
+    
+    if(!pdfull) {
+      return(-lxABprime[[j_k]][[j_s]][, idiff])
+      } else {
+        -lxABprime[[j_k]][[j_s]][, idiff] - lxBAprime[[i_k]][[j_k]][, i_s]
+    } 
+  }
+  # getpd(2, 1, 2, 1, 1, 1, FALSE) %>% sum()
+  # ijstub %>% filter(idiff==6, jbeta==2)
+  # getpd(5, 1)  %>% sum()
+  # getpd(6, 2)  %>% sum()
+  # getpd(4, 3)  %>% sum()
+  # getpd(3, 2)  %>% sum()
 
   
   
   # now get the pd elements of the jacobian
   ijpd <- ijstub %>%
-    mutate(jvalue=)
+    group_by(idiff, jbeta) %>%
+    mutate(jvalue=getpd3(idiff, jbeta, i_s, i_k, j_s, j_k, pdfull)) %>%
+    ungroup
   
   # convert to a matrix with the lower triangle and diagonal
   jmat <-ijpd %>% 
@@ -1186,6 +1300,71 @@ jacfast <- function(wh, xmat, beta, parallel=TRUE){
   jmat
   return(jmat)
 }
+
+j1 <- jacobian(diff_vec, x=as.vector(beta), wh=p$wh, xmat=p$xmat, targets=targets)
+j2 <- jacfast(wh, xmat, beta, parallel=TRUE)
+
+
+p <- make_problem(h=4, s=3, k=2)
+p <- make_problem(h=30, s=5, k=4)
+p <- make_problem(h=100, s=20, k=8)
+p <- make_problem(h=1000, s=20, k=8)
+p <- make_problem(h=4000, s=30, k=10)
+p <- make_problem(h=6000, s=50, k=20)
+p <- make_problem(h=30, s=5, k=4)
+
+
+set.seed(2345); rbetavec <- runif(p$s * p$k)
+rbeta <- vtom(rbetavec, nrow(p$targets))
+
+t1a <- proc.time()
+j1 <- jacobian(diff_vec, x=rbetavec, wh=p$wh, xmat=p$xmat, targets=p$targets)
+t1b <- proc.time()
+
+
+library(doParallel)
+library(foreach)
+cores <- detectCores()
+cores
+# registerDoParallel(cores=cores)
+cl = makeCluster(cores)
+registerDoParallel(cl)
+
+t2a <- proc.time()
+j2 <- jacfast(p$wh, p$xmat, rbeta, parallel=FALSE)
+t2b <- proc.time()
+
+stopCluster(cl)
+
+t1b - t1a
+t2b - t2a
+
+sum((j2 - j1)^2)
+(j2 - j1) %>% round(2)
+
+getpd2(1, 1)
+
+getpd2(2, 1)
+getpd2(2, 2)
+
+getpd2(3, 1)
+getpd2(3, 2)
+getpd2(3, 3)
+
+getpd2(4, 1)
+getpd2(4, 2)
+getpd2(4, 3)
+
+getpd2(5, 1)
+getpd2(5, 2)
+getpd2(5, 3)
+getpd2(5, 4)
+
+getpd2(6, 1)
+getpd2(6, 2)
+getpd2(6, 3)
+getpd2(6, 4)
+getpd2(6, 5)
 
 
 # for each state, for this person, we need: B_exponent <- beta %*% t(xmat)
