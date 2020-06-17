@@ -1386,7 +1386,7 @@ jacfast_mda <- function(beta, wh, xmat, ncpar=NULL){
   print("getting aAprime...")
   # get aAprime -- an array of k matrices, each with dimension h x s, where each matrix
   # is Amat multiplied by a column of xmat
-  # multiply the "s" dimension (columns) in Amat by the "k" dimention (columns) in xmat
+  # multiply the "s" dimension (columns) in Amat by the "k" dimension (columns) in xmat
   aAprime <- Apply(data = list(Amat, xmat), 
                    margins=list("s", "k"), 
                    fun = "*",
